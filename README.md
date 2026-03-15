@@ -1,463 +1,377 @@
 # Business-Mensajeria
 
-Microservicio de mensajería para envío de emails y SMS en BusinessApp. Gestiona el envío de notificaciones por correo electrónico (con adjuntos) y mensajes de texto, con integración al servicio de reportes.
+Microservicio de envio de emails y SMS para Business ERP. Gestiona el envio de mensajes a traves de multiples proveedores (Nodemailer/SMTP, SendGrid, Twilio, AWS SNS), procesa envios en cola con BullMQ y persiste el historial en MongoDB. Desarrollado con TypeScript, Express y arquitectura limpia (Hexagonal + Event-Driven).
 
-## 🏗️ Arquitectura
+---
 
-Implementa **Arquitectura Hexagonal + Event-Driven + Queue-Based** para procesamiento asíncrono robusto.
+## Lenguaje y Stack Tecnologico
+
+| Capa | Tecnologia | Version |
+|------|-----------|---------|
+| Lenguaje | TypeScript | 5.3.2 |
+| Runtime | Node.js | >= 18 |
+| Framework HTTP | Express | 4.18.2 |
+| Base de datos | MongoDB | 6.3.0 |
+| Cola de mensajes | BullMQ | 5.0.0 |
+| Cache / Broker | Redis (ioredis) | 5.3.2 |
+| Email SMTP | Nodemailer | 6.9.7 |
+| Email Cloud | SendGrid | 8.1.0 |
+| SMS | Twilio | 4.19.0 |
+| SMS alternativo | AWS SNS (SDK v3) | 3.460.0 |
+| Plantillas | Handlebars | 4.7.8 |
+| Mensajeria async | KafkaJS | 2.2.4 |
+| Validacion | Zod | 3.22.4 |
+| Logging | Winston | 3.11.0 |
+| Dev server | nodemon | 3.0.2 |
+| Puerto | 3006 | - |
+
+---
+
+## Caracteristicas
+
+- Envio de emails individuales y en lote via SMTP o SendGrid
+- Envio de SMS individuales y en lote via Twilio o AWS SNS
+- Sistema de colas con BullMQ — envios procesados asincrona y confiablemente
+- Workers independientes: EmailWorker y SMSWorker (pueden correr como proceso separado)
+- Reintentos automaticos de mensajes fallidos con backoff exponencial (3 intentos)
+- Plantillas Handlebars — emails HTML pre-disenados (bienvenida, codigo verificacion)
+- Envio de email con reporte adjunto — integracion con Business-Report
+- Historial completo en MongoDB (estado, timestamps, trazabilidad, errores)
+- Priorizacion de mensajes: URGENT, HIGH, NORMAL, LOW
+- Soporte Kafka para consumir eventos de otros microservicios
+
+---
+
+## Estructura del Proyecto
 
 ```
 Business-Mensajeria/
 ├── src/
-│   ├── domain/                           # Capa de dominio
+│   ├── index.ts                              # Punto de entrada
+│   ├── domain/
 │   │   ├── entities/
-│   │   │   ├── Message.ts               # Entidad base abstracta
-│   │   │   ├── EmailMessage.ts          # Entidad email con attachments
-│   │   │   └── SMSMessage.ts            # Entidad SMS
+│   │   │   ├── Message.ts                    # Entidad base de mensaje
+│   │   │   ├── EmailMessage.ts               # Entidad email
+│   │   │   └── SMSMessage.ts                 # Entidad SMS
 │   │   ├── repositories/
-│   │   │   └── IMessageRepository.ts    # Contrato de persistencia
+│   │   │   └── IMessageRepository.ts         # Contrato de persistencia
 │   │   └── services/
-│   │       ├── MessageDomainService.ts  # Lógica de negocio
-│   │       └── TemplateService.ts       # Renderizado de plantillas
-│   │
-│   ├── application/                      # Casos de uso
-│   │   ├── dto/
-│   │   │   └── MessageDTO.ts
-│   │   └── usecases/
-│   │       ├── SendEmail.ts             # Enviar email individual/batch
-│   │       ├── SendSMS.ts               # Enviar SMS individual/batch
-│   │       ├── QueryMessages.ts         # Consultar mensajes
-│   │       ├── RetryFailedMessage.ts    # Reintentos
-│   │       └── SendEmailWithReport.ts   # Email + reporte adjunto
-│   │
+│   │       ├── MessageDomainService.ts
+│   │       └── TemplateService.ts            # Motor Handlebars
+│   ├── application/
+│   │   ├── usecases/
+│   │   │   ├── SendEmail.ts
+│   │   │   ├── SendSMS.ts
+│   │   │   ├── QueryMessages.ts
+│   │   │   ├── RetryFailedMessage.ts
+│   │   │   └── SendEmailWithReport.ts
+│   │   └── dto/MessageDTO.ts
 │   ├── infrastructure/
-│   │   ├── database/
-│   │   │   └── mongodb/
-│   │   │       └── MongoMessageRepository.ts
-│   │   ├── providers/                    # Proveedores externos
+│   │   ├── database/mongodb/
+│   │   │   └── MongoMessageRepository.ts
+│   │   ├── providers/
 │   │   │   ├── email/
-│   │   │   │   ├── IEmailProvider.ts
-│   │   │   │   └── NodemailerProvider.ts  # SMTP
+│   │   │   │   ├── NodemailerProvider.ts     # SMTP
+│   │   │   │   └── SendGridProvider.ts       # Cloud email
 │   │   │   └── sms/
-│   │   │       ├── ISMSProvider.ts
-│   │   │       └── TwilioProvider.ts      # Twilio SMS
-│   │   ├── queue/                         # Sistema de colas
-│   │   │   └── bullmq/
-│   │   │       ├── EmailQueue.ts
-│   │   │       ├── SMSQueue.ts
-│   │   │       └── workers/
-│   │   │           ├── EmailWorker.ts     # Procesa emails
-│   │   │           └── SMSWorker.ts       # Procesa SMS
+│   │   │       ├── TwilioProvider.ts
+│   │   │       └── AWSSNSProvider.ts
+│   │   ├── queue/bullmq/
+│   │   │   ├── EmailQueue.ts
+│   │   │   ├── SMSQueue.ts
+│   │   │   └── workers/
+│   │   │       ├── EmailWorker.ts
+│   │   │       └── SMSWorker.ts
 │   │   ├── clients/
-│   │   │   └── ReportServiceClient.ts     # Cliente Business-Report
-│   │   └── http/
-│   │       └── express/
-│   │           ├── routes.ts
-│   │           └── middleware/
-│   │
-│   ├── shared/
-│   │   ├── config/
-│   │   ├── errors/
-│   │   └── utils/
-│   │
-│   └── index.ts
+│   │   │   └── ReportServiceClient.ts        # HTTP hacia Business-Report
+│   │   └── http/express/
+│   │       ├── routes.ts
+│   │       └── middleware/auth.middleware.ts
+│   └── shared/
+│       ├── config/config.ts
+│       └── utils/logger.ts
+├── templates/
+│   ├── welcome.hbs                           # Email de bienvenida
+│   └── verification-code.hbs                # Email con OTP
+├── docker-compose.yml                        # MongoDB + Redis + Kafka
+├── Dockerfile
+├── nodemon.json
+├── package.json
+└── tsconfig.json
 ```
 
-## 🚀 Stack Tecnológico
+---
 
-- **Lenguaje**: TypeScript/Node.js
-- **Framework HTTP**: Express.js
-- **Base de Datos**: MongoDB (historial de mensajes)
-- **Cola de Trabajos**: BullMQ + Redis
-- **Email Providers**: 
-  - Nodemailer (SMTP: Gmail, Outlook, etc.)
-  - SendGrid (opcional)
-- **SMS Providers**:
-  - Twilio
-  - AWS SNS (opcional)
-- **Plantillas**: Handlebars
-- **Mensajería**: Kafka (opcional)
+## Instalacion
 
-## 📋 Características
+### Requisitos previos
 
-- ✅ Envío de emails con HTML y plantillas Handlebars
-- ✅ Adjuntos en emails (archivos, reportes desde Business-Report)
-- ✅ Envío de SMS con Twilio
-- ✅ Colas asíncronas con BullMQ
-- ✅ Reintentos automáticos con exponential backoff
-- ✅ Priorización de mensajes (URGENT, HIGH, NORMAL, LOW)
-- ✅ Envío masivo (batch)
-- ✅ Seguimiento de estado (PENDING, QUEUED, SENDING, SENT, FAILED)
-- ✅ Historial completo en MongoDB
-- ✅ Integración con Business-Report para adjuntar documentos
-- ✅ Multi-proveedor (cambiar entre SMTP, SendGrid, Twilio, SNS)
+- Node.js >= 18
+- MongoDB (local o Atlas)
+- Redis >= 6
+- Credenciales de algun proveedor de email (SMTP/Gmail o SendGrid)
+- Opcional: credenciales Twilio o AWS SNS para SMS
 
-## 🔧 Instalación
+### Pasos
 
-```bash
-# Instalar dependencias
+```powershell
+# 1. Entrar al directorio
+cd C:\Proyectos\BusinessApp\Business-Mensajeria
+
+# 2. Instalar dependencias
 npm install
 
-# Copiar variables de entorno
-cp .env.example .env
-
-# Configurar .env con tus credenciales
+# 3. Configurar variables de entorno
+copy .env.example .env
+# Editar .env con tus credenciales
 ```
 
-## ⚙️ Configuración
+### Levantar infraestructura con Docker
 
-Edita el archivo `.env`:
+```powershell
+# Levanta MongoDB + Redis (minimo requerido)
+docker-compose up -d
+```
+
+---
+
+## Variables de entorno (.env)
 
 ```env
-# Server
+# Servidor
 PORT=3006
 NODE_ENV=development
 
 # MongoDB
 MONGODB_URI=mongodb://localhost:27017/business_mensajeria
+MONGODB_DB_NAME=business_mensajeria
 
-# Redis
+# Redis (BullMQ)
 REDIS_HOST=localhost
 REDIS_PORT=6379
+REDIS_PASSWORD=
 
-# Email - SMTP
+# Email — opcion A: SMTP (Gmail, Outlook, etc.)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASSWORD=your-app-password
+SMTP_USER=tu-email@gmail.com
+SMTP_PASSWORD=tu-app-password
 EMAIL_FROM=noreply@businessapp.com
 
-# SMS - Twilio
-TWILIO_ACCOUNT_SID=your-account-sid
-TWILIO_AUTH_TOKEN=your-auth-token
+# Email — opcion B: SendGrid
+SENDGRID_API_KEY=tu-api-key-sendgrid
+
+# SMS — opcion A: Twilio
+TWILIO_ACCOUNT_SID=tu-account-sid
+TWILIO_AUTH_TOKEN=tu-auth-token
 TWILIO_PHONE_NUMBER=+1234567890
 
-# Business-Report Service
-REPORT_SERVICE_URL=http://localhost:3007
-REPORT_SERVICE_API_KEY=your-api-key
+# SMS — opcion B: AWS SNS
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=tu-access-key
+AWS_SECRET_ACCESS_KEY=tu-secret-key
 
-# Security
-API_KEY=your-api-key-here
+# Integracion Business-Report
+REPORT_SERVICE_URL=http://localhost:3008
+REPORT_SERVICE_API_KEY=tu-api-key-report
+
+# Colas
+QUEUE_MAX_RETRIES=3
+QUEUE_RETRY_DELAY_MS=60000
+
+# Kafka (opcional)
+KAFKA_BROKERS=localhost:9092
+KAFKA_CLIENT_ID=business-mensajeria
 ```
 
-## 🏃 Ejecución
+---
 
-```bash
-# Desarrollo
+## Levantar el Microservicio
+
+### Desarrollo
+
+```powershell
+cd C:\Proyectos\BusinessApp\Business-Mensajeria
 npm run dev
+```
 
-# Producción
-npm run build
-npm start
+Arranca en http://localhost:3006 con nodemon (hot-reload). Los workers se inician integrados.
 
-# Workers (en terminal separado)
+### Workers independientes (produccion recomendada)
+
+```powershell
+# Solo workers (separado del API server)
 npm run worker
 
-# Tests
-npm test
+# Workers con hot-reload
+npm run worker:dev
 ```
 
-## 📡 API Endpoints
+### Produccion
 
-### Enviar Email
-```http
+```powershell
+npm run build
+npm start
+```
+
+### Verificar que esta corriendo
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:3006/health
+```
+
+---
+
+## URLs Disponibles
+
+| URL | Descripcion |
+|-----|-------------|
+| http://localhost:3006/health | Health check del servicio |
+| http://localhost:3006/api/messages | API de mensajes |
+
+---
+
+## Endpoints de la API
+
+Todos los endpoints requieren autenticacion: `Authorization: Bearer <token>` o `x-api-key: <key>`.
+
+### Emails
+
+| Metodo | Ruta | Descripcion |
+|--------|------|-------------|
+| POST | /api/messages/email | Enviar email individual |
+| POST | /api/messages/email/batch | Enviar emails en lote |
+| POST | /api/messages/email/with-report | Enviar email con reporte adjunto |
+
+### SMS
+
+| Metodo | Ruta | Descripcion |
+|--------|------|-------------|
+| POST | /api/messages/sms | Enviar SMS individual |
+| POST | /api/messages/sms/batch | Enviar SMS en lote |
+
+### Historial y reintentos
+
+| Metodo | Ruta | Descripcion |
+|--------|------|-------------|
+| GET | /api/messages | Consultar historial (paginado) |
+| GET | /api/messages/:id | Obtener mensaje por ID |
+| GET | /api/messages/:id/status | Estado de un mensaje |
+| POST | /api/messages/:id/retry | Reintentar mensaje fallido |
+| POST | /api/messages/retry/all | Reintentar todos los fallidos |
+
+### Sistema
+
+| Metodo | Ruta | Descripcion |
+|--------|------|-------------|
+| GET | /health | Health check |
+
+---
+
+## Ejemplos de Request
+
+### Enviar email con plantilla
+
+```json
 POST /api/messages/email
-Headers: x-api-key: your-api-key
-Body:
 {
-  "from": { "email": "sender@example.com", "name": "Sender" },
-  "to": [{ "email": "recipient@example.com", "name": "Recipient" }],
-  "subject": "Asunto del correo",
-  "body": "<h1>Contenido HTML</h1>",
-  "isHtml": true,
-  "priority": "NORMAL",
-  "traceId": "abc-123"
-}
-```
-
-### Enviar Email con Plantilla
-```http
-POST /api/messages/email
-Body:
-{
-  "from": { "email": "sender@example.com" },
-  "to": [{ "email": "user@example.com" }],
-  "subject": "Bienvenido",
-  "body": "",
-  "templateName": "welcome",
-  "templateData": { "userName": "Juan", "companyName": "BusinessApp" }
-}
-```
-
-### Enviar Email con Reporte
-```http
-POST /api/messages/email/with-report
-Body:
-{
-  "from": { "email": "reports@businessapp.com" },
-  "to": [{ "email": "user@example.com" }],
-  "subject": "Tu reporte mensual",
-  "body": "<p>Adjunto tu reporte</p>",
-  "reportId": "report-123",
-  "reportFormat": "pdf"
+  "to": "usuario@empresa.com",
+  "subject": "Bienvenido al sistema",
+  "template": "welcome",
+  "templateData": { "nombre": "Juan", "empresa": "Acme SA" }
 }
 ```
 
 ### Enviar SMS
-```http
-POST /api/messages/sms
-Headers: x-api-key: your-api-key
-Body:
-{
-  "from": "+1234567890",
-  "to": "+0987654321",
-  "body": "Tu código de verificación es: 123456",
-  "priority": "URGENT"
-}
-```
 
-### Enviar Batch de Emails
-```http
-POST /api/messages/email/batch
-Body: [{ email1 }, { email2 }, ...]
-```
-
-### Consultar Mensajes
-```http
-GET /api/messages?type=EMAIL&status=SENT&limit=50
-Headers: x-api-key: your-api-key
-```
-
-### Obtener Mensaje por ID
-```http
-GET /api/messages/:id
-Headers: x-api-key: your-api-key
-```
-
-### Estado de Mensaje
-```http
-GET /api/messages/:id/status
-Headers: x-api-key: your-api-key
-```
-
-### Reintentar Mensaje Fallido
-```http
-POST /api/messages/:id/retry
-Headers: x-api-key: your-api-key
-```
-
-### Reintentar Todos los Fallidos
-```http
-POST /api/messages/retry/all?limit=100
-Headers: x-api-key: your-api-key
-```
-
-### Health Check
-```http
-GET /health
-```
-
-## 🔄 Flujo de Trabajo
-
-### Email con Reporte:
-1. API recibe solicitud con `reportId`
-2. Descarga reporte desde Business-Report
-3. Crea email con archivo adjunto
-4. Encola en BullMQ (email-queue)
-5. EmailWorker procesa
-6. Nodemailer envía vía SMTP
-7. Actualiza estado en MongoDB
-8. Responde con ID y estado
-
-### SMS:
-1. API recibe solicitud
-2. Valida formato E.164 (+1234567890)
-3. Encola en BullMQ (sms-queue)
-4. SMSWorker procesa
-5. Twilio envía SMS
-6. Actualiza estado
-7. Reintentos automáticos si falla
-
-## 📧 Plantillas de Email
-
-Crear archivos `.hbs` en `templates/`:
-
-**templates/welcome.hbs:**
-```handlebars
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: Arial, sans-serif; }
-  </style>
-</head>
-<body>
-  <h1>Bienvenido {{userName}}!</h1>
-  <p>Gracias por unirte a {{companyName}}</p>
-</body>
-</html>
-```
-
-Uso:
 ```json
+POST /api/messages/sms
 {
-  "templateName": "welcome",
-  "templateData": {
-    "userName": "Juan",
-    "companyName": "BusinessApp"
-  }
+  "to": "+593999999999",
+  "body": "Tu codigo de verificacion es: 123456"
 }
 ```
 
-## 🔌 Integración con Business-Report
+### Email con reporte adjunto
 
-El servicio se comunica con Business-Report para obtener archivos:
-
-```typescript
-// Business-Report debe exponer:
-GET /api/reports/:id/download?format=pdf
-Headers: x-api-key: report-api-key
-Response: Binary file (PDF, Excel, CSV)
+```json
+POST /api/messages/email/with-report
+{
+  "to": "gerente@empresa.com",
+  "subject": "Reporte mensual de ventas",
+  "reportId": "uuid-del-reporte-generado",
+  "reportFormat": "pdf",
+  "template": "report-delivery"
+}
 ```
 
-## 📊 Estados de Mensaje
+---
 
-- `PENDING`: Creado, pendiente de encolar
-- `QUEUED`: En cola de procesamiento
-- `SENDING`: Enviándose actualmente
-- `SENT`: Enviado exitosamente
-- `FAILED`: Falló el envío
-- `RETRY`: En reintento
+## Arquitectura de Colas
 
-## 🔁 Reintentos
-
-- Reintentos automáticos: 3 intentos
-- Delay exponencial: 1min, 2min, 4min
-- Configurable en `.env`: `QUEUE_MAX_RETRIES`
-
-## 🔐 Seguridad
-
-- Autenticación con API Key
-- Validación de emails y teléfonos
-- Sanitización de HTML
-- Rate limiting recomendado
-- CORS configurado
-
-## 📦 Docker
-
-**Dockerfile:**
-```dockerfile
-FROM node:20-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY dist ./dist
-COPY templates ./templates
-CMD ["node", "dist/index.js"]
+```
+HTTP Request
+    |
+    v
+API (Express) -- enqueue --> EmailQueue / SMSQueue (BullMQ + Redis)
+                                    |
+                          EmailWorker / SMSWorker
+                                    |
+                         +----------+----------+
+                         |                     |
+                  Nodemailer / SendGrid    Twilio / AWS SNS
+                         |                     |
+                         v                     v
+                  MongoDB (historial: status, timestamps, errores)
 ```
 
-**docker-compose.yml:**
-```yaml
-version: '3.8'
-services:
-  mongodb:
-    image: mongo:7
-    ports:
-      - "27017:27017"
-  
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-  
-  business-mensajeria:
-    build: .
-    ports:
-      - "3006:3006"
-    depends_on:
-      - mongodb
-      - redis
-    environment:
-      MONGODB_URI: mongodb://mongodb:27017/business_mensajeria
-      REDIS_HOST: redis
+Estados de mensaje: `pending` → `queued` → `sending` → `sent` / `failed`
+
+---
+
+## Plantillas Handlebars
+
+Los archivos `.hbs` en la carpeta `templates/` son plantillas HTML reutilizables:
+
+| Archivo | Uso |
+|---------|-----|
+| welcome.hbs | Email de bienvenida al registrar usuario |
+| verification-code.hbs | Email con codigo OTP o verificacion |
+
+Para agregar una nueva plantilla, crear `templates/mi-plantilla.hbs` y referenciarla con `"template": "mi-plantilla"`.
+
+---
+
+## Scripts npm
+
+| Comando | Descripcion |
+|---------|-------------|
+| npm run dev | Desarrollo con nodemon (hot-reload) |
+| npm run build | Compilar TypeScript a dist/ |
+| npm start | Ejecutar compilado (produccion) |
+| npm run worker | Levantar solo los workers de BullMQ |
+| npm run worker:dev | Workers con hot-reload |
+| npm test | Tests con Jest |
+| npm run lint | Linting ESLint |
+| npm run format | Formatear con Prettier |
+
+---
+
+## Docker
+
+```powershell
+# Levantar MongoDB + Redis + Kafka
+docker-compose up -d
+
+# Ver logs
+docker-compose logs -f
+
+# Detener
+docker-compose down
 ```
 
-## 🧪 Testing
+---
 
-```bash
-npm test
-npm run test:watch
-```
+## Licencia
 
-## 📝 Ejemplo Completo
-
-```typescript
-// Enviar email con reporte adjunto
-const response = await fetch('http://localhost:3006/api/messages/email/with-report', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'x-api-key': 'your-api-key'
-  },
-  body: JSON.stringify({
-    from: { email: 'reports@businessapp.com', name: 'BusinessApp Reports' },
-    to: [{ email: 'cliente@example.com', name: 'Cliente' }],
-    subject: 'Reporte Mensual - Enero 2025',
-    body: '<h2>Hola!</h2><p>Adjunto encuentras tu reporte mensual.</p>',
-    reportId: 'report-2025-01',
-    reportFormat: 'pdf',
-    priority: 'HIGH',
-    traceId: 'trace-xyz-789'
-  })
-});
-
-const result = await response.json();
-console.log(result);
-// { id: "...", type: "EMAIL", status: "QUEUED", traceId: "trace-xyz-789" }
-```
-
-## 🤝 Integración desde otros servicios
-
-**Node.js:**
-```javascript
-import axios from 'axios';
-
-await axios.post('http://localhost:3006/api/messages/sms', {
-  from: '+1234567890',
-  to: '+0987654321',
-  body: 'Tu código: 123456',
-  priority: 'URGENT'
-}, {
-  headers: { 'x-api-key': 'your-api-key' }
-});
-```
-
-**Python:**
-```python
-import requests
-
-requests.post('http://localhost:3006/api/messages/email', 
-  json={
-    'from': {'email': 'noreply@app.com'},
-    'to': [{'email': 'user@example.com'}],
-    'subject': 'Notificación',
-    'body': '<p>Contenido</p>'
-  },
-  headers={'x-api-key': 'your-api-key'}
-)
-```
-
-## 📈 Monitoreo
-
-- Health check: `/health`
-- Logs centralizados (Winston)
-- Métricas de BullMQ
-- Estado de colas en Redis
-
-## 📄 Licencia
-
-Privado - BusinessApp
-
-## 👥 Autor
-
-BusinessApp Development Team
+Proyecto interno — Business ERP.
